@@ -227,9 +227,8 @@ async function getAccessToken() {
 async function fetchVentasFromSheet() {
   const token = await getAccessToken();
   if (!token) return null;
-  const range = encodeURIComponent(`${SHEET_NAME}!A:W`);
   const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${range}`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${SHEET_NAME}%21A%3AW`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   const data = await res.json();
@@ -260,9 +259,8 @@ async function appendVentaToSheet(v) {
     v.conocio||'', String(v.anulada||false),
     v.telefono||'', v.email||''
   ];
-  const appendRange = encodeURIComponent(`${SHEET_NAME}!A:W`);
   const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${appendRange}:append?valueInputOption=USER_ENTERED`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${SHEET_NAME}%21A%3AW:append?valueInputOption=USER_ENTERED`,
     {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -913,4 +911,4 @@ export default function App() {
       </div>
     </div>
   );
-} 
+}

@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react"; 
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, AreaChart, Area } from "recharts";
 
 const RAW_INICIAL = [
@@ -227,8 +227,9 @@ async function getAccessToken() {
 async function fetchVentasFromSheet() {
   const token = await getAccessToken();
   if (!token) return null;
+  const range = encodeURIComponent(`${SHEET_NAME}!A:W`);
   const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${SHEET_NAME}!A:W`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${range}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   const data = await res.json();
@@ -259,8 +260,9 @@ async function appendVentaToSheet(v) {
     v.conocio||'', String(v.anulada||false),
     v.telefono||'', v.email||''
   ];
+  const appendRange = encodeURIComponent(`${SHEET_NAME}!A:W`);
   const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${SHEET_NAME}!A:W:append?valueInputOption=USER_ENTERED`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${appendRange}:append?valueInputOption=USER_ENTERED`,
     {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },

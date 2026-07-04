@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, AreaChart, Area } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, AreaChart, Area, ComposedChart, Line } from "recharts";
 
 const RAW_INICIAL = [
   {"n": "1", "f": "2022-06-28", "c": "Ludmila Janik", "sexo": "F", "edad": "", "prov": "Córdoba", "ciudad": "", "mp": "Transferencia", "canal": "WhatsApp/Directo", "cat": "Cerámica", "tcer": "Craquelada", "prod": "Taza Craquelada (2)", "uni": 2, "m": 3460.0, "tipo": "B2C", "recurrente": false, "primera": true, "encargo": false, "sena": false, "conocio": "", "anulada": false, "telefono": "", "email": ""},
@@ -273,7 +273,8 @@ async function appendVentaToSheet(v) {
 
 
 
-function parseVenta(text) {
+
+function parseVenta(text, ventasActuales) {
   const get = (...keys) => {
     for (const k of keys) {
       const m = text.match(new RegExp(k + '[^:\\n]*:\\s*([^\\n]+)', 'i'));
@@ -281,7 +282,20 @@ function parseVenta(text) {
     }
     return '';
   };
-  const numM = text.match(/VENTA\s*N[ºo°]?\s*:?\s*(\d+)/i);
+
+  // Numero: si no viene en el mensaje, autoincrementar
+  const numM = text.match(/VENTA\s*N[ºro°]?\s*:?\s*(\d+)/i);
+  let numero = '';
+  if (numM) {
+    numero = numM[1];
+  } else {
+    const maxN = ventasActuales.reduce((max, v) => {
+      const n = parseInt(v.n);
+      return !isNaN(n) && n > max ? n : max;
+    }, 0);
+    numero = String(maxN + 1);
+  }
+
   const mRaw = get('Monto total', 'Monto').replace(/[$\.]/g, '').replace(',', '.').split(/\s/)[0];
   const pedRaw = get('Pedido');
   const catMap = [
@@ -289,14 +303,16 @@ function parseVenta(text) {
     ['perchero', 'Perchero'], ['taza', 'Ceramica'], ['pocillo', 'Ceramica'],
     ['jarra', 'Ceramica'], ['postal', 'Grafica']
   ];
-  const catDisplay = { 'Reloj Galaxia':'Reloj Galaxia','Mesa S':'Mesa S','Mensula':'Ménsula','Perchero':'Perchero','Ceramica':'Cerámica','Grafica':'Gráfica' };
+  const catDisplay = { 'Reloj Galaxia':'Reloj Galaxia','Mesa S':'Mesa S','Mensula':'Mensula','Perchero':'Perchero','Ceramica':'Ceramica','Grafica':'Grafica' };
   let catKey = 'Otro';
   for (const [k, v] of catMap) if (pedRaw.toLowerCase().includes(k)) { catKey = v; break; }
   const cat = catDisplay[catKey] || catKey;
-  const provRaw = get('Provincia').split(/[-–]/)[0].trim();
-  const provMap = { 'cordoba':'Córdoba','buenos aires':'Buenos Aires','salta':'Salta','mendoza':'Mendoza','entre rios':'Entre Ríos','entre r':'Entre Ríos','la pampa':'La Pampa','rio negro':'Río Negro','caba':'CABA' };
+
+  const provRaw = get('Provincia').split(/[-]/)[0].trim();
+  const provMap = { 'cordoba':'Cordoba','buenos aires':'Buenos Aires','salta':'Salta','mendoza':'Mendoza','entre rios':'Entre Rios','la pampa':'La Pampa','rio negro':'Rio Negro','caba':'CABA' };
   let prov = provRaw;
   for (const [k, v] of Object.entries(provMap)) if (provRaw.toLowerCase().includes(k)) { prov = v; break; }
+
   const canalRaw = get('Canal de venta').toLowerCase();
   let canal = '';
   if (/tienda nube/.test(canalRaw)) canal = 'Tienda Nube';
@@ -307,20 +323,24 @@ function parseVenta(text) {
   else if (/presencial/.test(canalRaw)) canal = 'Presencial';
   else if (/institucional/.test(canalRaw)) canal = 'Institucional';
   else canal = get('Canal de venta');
+
   const conocioRaw = get('Conocio').toLowerCase();
   let conocio = '';
   if (/instagram/.test(conocioRaw)) conocio = 'Instagram';
   else if (/google/.test(conocioRaw)) conocio = 'Google';
   else if (/mercado libre/.test(conocioRaw)) conocio = 'Mercado Libre';
-  else if (/recomend/.test(conocioRaw)) conocio = 'Recomendación';
-  else if (/ya nos conoc/.test(conocioRaw)) conocio = 'Ya nos conocía';
+  else if (/recomend/.test(conocioRaw)) conocio = 'Recomendacion';
+  else if (/ya nos conoc/.test(conocioRaw)) conocio = 'Ya nos conocia';
   else if (/tiktok/.test(conocioRaw)) conocio = 'TikTok';
   else if (conocioRaw && conocioRaw !== '-') conocio = get('Conocio');
+
   return {
-    n: numM ? numM[1] : '',
+    n: numero,
     f: new Date().toISOString().split('T')[0],
-    c: get('Nombre'), sexo: get('Sexo').split(/[\s/]/)[0].toUpperCase().slice(0,1) || '',
-    edad: get('Rango etario'), prov, ciudad: get('Ciudad'),
+    c: get('Nombre'),
+    sexo: get('Sexo').split(/[\s/]/)[0].toUpperCase().slice(0,1) || '',
+    edad: get('Rango etario'),
+    prov, ciudad: get('Ciudad'),
     mp: get('Medio de pago'), canal, cat,
     tcer: get('Tipo ceramica', 'Tipo cer'),
     prod: pedRaw,
@@ -332,7 +352,7 @@ function parseVenta(text) {
     encargo: /^s[ii]/i.test(get('Por encargo')),
     sena: /^s[ii]/i.test(get('Sena')),
     conocio, anulada: false,
-    telefono: get('Telefono', 'Teléfono'),
+    telefono: get('Telefono'),
     email: get('Email'),
   };
 }
@@ -341,35 +361,49 @@ const TEMPLATE = `VENTA Nro: \nFecha: \n\n-- PRODUCTO --\nPedido + (cantidad): \
 
 const ACC = "#C8A96E", DARK = "#0F0F0F", MID = "#1E1E1E", CARD = "#252525", BORDER = "#2E2E2E", TEXT = "#E8D5A3", MUTED = "#666";
 const COLORS = ["#C8A96E","#8B6914","#E8D5A3","#5C4A1E","#F0E8D0","#A07840","#3D2F10","#D4B483","#6B5020","#FFE4A0","#9B7B3A","#BFA060"];
-const CAT_COLORS = {"Cerámica":"#A07840","Perchero":"#C8A96E","Reloj Galaxia":"#F0E8D0","Mesa S":"#8B6914","Gráfica":"#5C4A1E","Ménsula":"#D4B483","Otro":"#444"};
+const CAT_COLORS = {"Ceramica":"#A07840","Ceramica":"#A07840","Perchero":"#C8A96E","Reloj Galaxia":"#F0E8D0","Mesa S":"#8B6914","Grafica":"#5C4A1E","Mensula":"#D4B483","Otro":"#444"};
+const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const fmt = n => n >= 1000000 ? `$${(n/1000000).toFixed(1)}M` : n >= 1000 ? `$${Math.round(n/1000)}K` : `$${Math.round(n)}`;
 const fmtFull = n => `$${Math.round(n).toLocaleString('es-AR')}`;
 
 const TT = ({active, payload, label}) => {
   if (!active || !payload?.length) return null;
   return (
-    <div style={{background:'#1A1A1A', border:`1px solid ${ACC}44`, borderRadius:8, padding:'8px 14px'}}>
-      <p style={{margin:0, color:'#888', fontSize:11, fontFamily:'DM Mono'}}>{label}</p>
-      {payload.map((p,i) => <p key={i} style={{margin:'2px 0 0', color:ACC, fontSize:14, fontWeight:700}}>{typeof p.value === 'number' && p.value > 500 ? fmtFull(p.value) : p.value}</p>)}
+    <div style={{background:'#1A1A1A', border:`1px solid ${ACC}44`, borderRadius:8, padding:'8px 14px', maxWidth:220}}>
+      <p style={{margin:'0 0 4px', color:'#aaa', fontSize:11, fontFamily:'DM Mono', fontWeight:600}}>{label}</p>
+      {payload.map((p,i) => (
+        <p key={i} style={{margin:'2px 0', color: p.color || ACC, fontSize:12, fontFamily:'DM Mono'}}>
+          {p.name}: {typeof p.value === 'number' && p.value > 500 ? fmtFull(p.value) : p.value}
+        </p>
+      ))}
     </div>
   );
 };
-const KPI = ({label, value, sub, hi}) => (
+
+const KPI = ({label, value, sub, hi, delta}) => (
   <div style={{background: hi ? `linear-gradient(135deg,${ACC}18,${ACC}05)` : CARD, border:`1px solid ${hi?ACC:BORDER}`, borderRadius:12, padding:'16px 20px', display:'flex', flexDirection:'column', gap:3}}>
     <span style={{fontSize:9, letterSpacing:'0.12em', textTransform:'uppercase', color:hi?ACC:MUTED, fontFamily:"'DM Mono',monospace"}}>{label}</span>
     <span style={{fontSize:24, fontWeight:700, color:hi?ACC:TEXT, fontFamily:"'Playfair Display',serif", lineHeight:1.1}}>{value}</span>
+    {delta !== undefined && (
+      <span style={{fontSize:10, color: delta >= 0 ? '#5A9A5A' : '#AA5555', fontFamily:'DM Mono'}}>
+        {delta >= 0 ? '+' : ''}{delta}% vs periodo anterior
+      </span>
+    )}
     {sub && <span style={{fontSize:10, color:MUTED, fontFamily:"'DM Mono',monospace"}}>{sub}</span>}
   </div>
 );
+
 const Sec = ({children}) => (
   <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:14}}>
     <div style={{width:3, height:18, background:ACC, borderRadius:2}}/>
     <h2 style={{margin:0, fontSize:11, letterSpacing:'0.15em', textTransform:'uppercase', color:ACC, fontFamily:"'DM Mono',monospace"}}>{children}</h2>
   </div>
 );
+
 const Panel = ({children, style={}}) => (
   <div style={{background:CARD, border:`1px solid ${BORDER}`, borderRadius:12, padding:20, ...style}}>{children}</div>
 );
+
 const BarH = (data) => (
   <div style={{display:'flex', flexDirection:'column', gap:6, marginTop:6}}>
     {data.map((p,i) => (
@@ -385,6 +419,17 @@ const BarH = (data) => (
     ))}
   </div>
 );
+
+// Colores fijos por categoria para graficos apilados
+const CAT_STACK_COLORS = {
+  'Ceramica': '#A07840',
+  'Perchero': '#C8A96E',
+  'Reloj Galaxia': '#F0E8D0',
+  'Mesa S': '#8B6914',
+  'Grafica': '#5C4A1E',
+  'Mensula': '#D4B483',
+  'Otro': '#555'
+};
 
 export default function App() {
   const [tab, setTab] = useState('dashboard');
@@ -402,20 +447,16 @@ export default function App() {
   useEffect(() => {
     fetchVentasFromSheet()
       .then(data => {
-        if (data && data.length > 0) {
-          setVentas(data);
-          setSheetStatus('conectado');
-        } else {
-          setSheetStatus('local');
-        }
+        if (data && data.length > 0) { setVentas(data); setSheetStatus('conectado'); }
+        else setSheetStatus('local');
       })
       .catch(() => setSheetStatus('local'));
   }, []);
 
   const handleParse = () => {
     setErr(''); setSaved(false);
-    if (!input.includes('VENTA')) { setErr('No se detecto "VENTA Nro:" en el mensaje.'); setParsed(null); return; }
-    const p = parseVenta(input);
+    if (!input.includes('VENTA') && !input.includes('Pedido')) { setErr('No se detecto formato de venta valido.'); setParsed(null); return; }
+    const p = parseVenta(input, ventas);
     if (!p.c) { setErr('No se pudo leer el nombre del cliente.'); return; }
     setParsed(p);
   };
@@ -430,9 +471,7 @@ export default function App() {
         return [...prev, parsed].sort((a, b) => String(a.n).localeCompare(String(b.n), undefined, {numeric: true}));
       });
       setSaved(true); setInput(''); setParsed(null);
-    } catch (e) {
-      setErr('Error al guardar en Sheets: ' + e.message);
-    }
+    } catch (e) { setErr('Error al guardar: ' + e.message); }
     setSaving(false);
   };
 
@@ -452,11 +491,96 @@ export default function App() {
   const totalUni = useMemo(() => filtered.reduce((s,v) => s+v.uni, 0), [filtered]);
   const ticketProm = useMemo(() => conM.length ? totalM/conM.length : 0, [totalM, conM]);
 
+  // Delta vs periodo anterior
+  const delta = useMemo(() => {
+    if (fy === 'todos') return undefined;
+    const prevYear = String(parseInt(fy) - 1);
+    const curr = ventas.filter(v => !v.anulada && v.f.slice(0,4) === fy && v.m > 0).reduce((s,v) => s+v.m, 0);
+    const prev = ventas.filter(v => !v.anulada && v.f.slice(0,4) === prevYear && v.m > 0).reduce((s,v) => s+v.m, 0);
+    if (!prev) return undefined;
+    return Math.round(((curr - prev) / prev) * 100);
+  }, [ventas, fy]);
+
   const byKey = useCallback((arr, key, filterEmpty=false) => {
     const m = {};
     arr.forEach(v => { const k = v[key] || 'Sin dato'; if (filterEmpty && !v[key]) return; m[k] = (m[k]||0)+1; });
     return Object.entries(m).sort((a,b) => b[1]-a[1]).map(([name, value]) => ({name, value}));
   }, []);
+
+  // Grafico mensual: si hay año seleccionado muestra 12 meses fijos; si es "todos" muestra historico
+  const byMonth = useMemo(() => {
+    if (fy !== 'todos') {
+      // 12 meses del año seleccionado con 0 si no hay datos
+      return MESES.map((mes, i) => {
+        const mesKey = `${fy}-${String(i+1).padStart(2,'0')}`;
+        const ventasMes = filtered.filter(v => v.f.slice(0,7) === mesKey);
+        return {
+          mes,
+          ventas: ventasMes.length,
+          ingresos: ventasMes.filter(v => v.m > 0).reduce((s,v) => s+v.m, 0),
+          ticket: ventasMes.filter(v => v.m > 0).length ? ventasMes.filter(v => v.m > 0).reduce((s,v) => s+v.m, 0) / ventasMes.filter(v => v.m > 0).length : 0,
+        };
+      });
+    } else {
+      const m = {};
+      filtered.forEach(v => {
+        const mesKey = v.f.slice(0,7);
+        if (!m[mesKey]) m[mesKey] = {mes:'', ventas:0, ingresos:0, ticket:0, count:0};
+        m[mesKey].ventas++;
+        if (v.m > 0) { m[mesKey].ingresos += v.m; m[mesKey].count++; }
+      });
+      const L = ['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+      return Object.entries(m).sort((a,b) => a[0].localeCompare(b[0])).map(([key, d]) => ({
+        ...d,
+        mes: key.replace(/(\d{4})-(\d{2})/, (_, y, mo) => `${L[+mo]}'${y.slice(2)}`),
+        ticket: d.count ? d.ingresos / d.count : 0,
+      }));
+    }
+  }, [filtered, fy]);
+
+  // Grafico anual/mensual apilado por categoria
+  const byYearOrMonth = useMemo(() => {
+    const allCats = [...new Set(ventas.map(v => v.cat))];
+    if (fy !== 'todos') {
+      // Barras apiladas por mes con desglose por categoria
+      return MESES.map((mes, i) => {
+        const mesKey = `${fy}-${String(i+1).padStart(2,'0')}`;
+        const ventasMes = conM.filter(v => v.f.slice(0,7) === mesKey);
+        const obj = {mes};
+        allCats.forEach(cat => {
+          obj[cat] = ventasMes.filter(v => v.cat === cat).reduce((s,v) => s+v.m, 0);
+        });
+        obj.total = ventasMes.reduce((s,v) => s+v.m, 0);
+        return obj;
+      });
+    } else {
+      // Barras agrupadas por año
+      const m = {};
+      ventas.filter(v => !v.anulada).forEach(v => {
+        const y = v.f.slice(0,4);
+        if (!m[y]) { m[y] = {year: y, ventas: 0, ingresos: 0, unidades: 0}; }
+        m[y].ventas++; m[y].unidades += v.uni;
+        if (v.m > 0) m[y].ingresos += v.m;
+      });
+      return Object.values(m).sort((a,b) => a.year.localeCompare(b.year));
+    }
+  }, [ventas, conM, fy]);
+
+  const allCatsForStack = useMemo(() => [...new Set(conM.map(v => v.cat))], [conM]);
+
+  // Mapa de calor: frecuencia de ventas por mes del año (todos los años)
+  const heatmapData = useMemo(() => {
+    const grid = {}; // grid[year][month] = count
+    ventas.filter(v => !v.anulada).forEach(v => {
+      const y = v.f.slice(0,4);
+      const mo = parseInt(v.f.slice(5,7)) - 1;
+      if (!grid[y]) grid[y] = Array(12).fill(0);
+      grid[y][mo]++;
+    });
+    return Object.entries(grid).sort((a,b) => a[0].localeCompare(b[0])).map(([year, counts]) => ({year, counts}));
+  }, [ventas]);
+
+  const maxHeat = useMemo(() => Math.max(...heatmapData.flatMap(d => d.counts)), [heatmapData]);
 
   const byCat = useMemo(() => byKey(filtered, 'cat'), [filtered, byKey]);
   const byProv = useMemo(() => byKey(filtered, 'prov'), [filtered, byKey]);
@@ -465,30 +589,8 @@ export default function App() {
   const bySexo = useMemo(() => byKey(filtered, 'sexo', true), [filtered, byKey]);
   const byEdad = useMemo(() => byKey(filtered, 'edad', true).slice(0,8), [filtered, byKey]);
   const byTipo = useMemo(() => byKey(filtered, 'tipo'), [filtered, byKey]);
-  const byTipoCer = useMemo(() => { const a = filtered.filter(v => v.cat === 'Cerámica' && v.tcer); return byKey(a, 'tcer').slice(0,6); }, [filtered, byKey]);
+  const byTipoCer = useMemo(() => { const a = filtered.filter(v => v.cat === 'Ceramica' && v.tcer); return byKey(a, 'tcer').slice(0,6); }, [filtered, byKey]);
   const byConocio = useMemo(() => byKey(filtered, 'conocio', true), [filtered, byKey]);
-
-  const byYear = useMemo(() => {
-    const m = {};
-    ventas.filter(v => !v.anulada).forEach(v => {
-      const y = v.f.slice(0,4);
-      if (!m[y]) m[y] = {year:y, ventas:0, ingresos:0, unidades:0};
-      m[y].ventas++; m[y].unidades += v.uni; if (v.m > 0) m[y].ingresos += v.m;
-    });
-    return Object.values(m).sort((a,b) => a.year.localeCompare(b.year));
-  }, [ventas]);
-
-  const byMonth = useMemo(() => {
-    const m = {};
-    filtered.forEach(v => {
-      const mes = v.f.slice(0,7);
-      if (!m[mes]) m[mes] = {mes, ventas:0, unidades:0};
-      m[mes].ventas++; m[mes].unidades += v.uni;
-    });
-    const L = ['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-    return Object.values(m).sort((a,b) => a.mes.localeCompare(b.mes))
-      .map(d => ({...d, mes: d.mes.replace(/(\d{4})-(\d{2})/, (_, y, mo) => `${L[+mo]}'${y.slice(2)}`)}));
-  }, [filtered]);
 
   const catIngresos = useMemo(() => {
     const m = {}; conM.forEach(v => { m[v.cat] = (m[v.cat]||0)+v.m; });
@@ -507,7 +609,7 @@ export default function App() {
 
   const topClientes = useMemo(() => {
     const m = {};
-    conM.forEach(v => { if (!m[v.c]) m[v.c] = {name:v.c, compras:0, total:0}; m[v.c].compras++; m[v.c].total += v.m; });
+    conM.forEach(v => { if (!m[v.c]) m[v.c] = {name:v.c, compras:0, total:0, telefono:'', email:''}; m[v.c].compras++; m[v.c].total += v.m; if (v.telefono) m[v.c].telefono = v.telefono; if (v.email) m[v.c].email = v.email; });
     return Object.values(m).sort((a,b) => b.total-a.total).slice(0,8);
   }, [conM]);
 
@@ -542,6 +644,7 @@ export default function App() {
 
         {tab === 'dashboard' && (
           <div style={{display:'flex', flexDirection:'column', gap:22}}>
+
             <div style={{display:'flex', gap:6, flexWrap:'wrap', alignItems:'center'}}>
               <span style={{fontSize:9, color:MUTED, fontFamily:'DM Mono', letterSpacing:'0.1em'}}>ANO:</span>
               <FB val="todos" cur={fy} set={setFy} label="Todos"/>
@@ -552,49 +655,79 @@ export default function App() {
               <span style={{fontSize:9, color:MUTED, fontFamily:'DM Mono', marginLeft:8, letterSpacing:'0.1em'}}>TIPO:</span>
               {['todos','B2C','B2B','Canje'].map(t => <FB key={t} val={t} cur={ft} set={setFt} label={t==='todos'?'Todos':t}/>)}
             </div>
+
             <div style={{display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:10}}>
-              <KPI label="Ingresos registrados" value={fmt(totalM)} sub={`${conM.length} ventas con monto`} hi/>
+              <KPI label="Ingresos registrados" value={fmt(totalM)} sub={`${conM.length} ventas con monto`} hi delta={delta}/>
               <KPI label="Total ventas" value={filtered.length} sub={`${ventas.length} en historial`}/>
               <KPI label="Unidades vendidas" value={totalUni.toLocaleString('es-AR')} sub="piezas totales"/>
               <KPI label="Ticket promedio" value={fmt(ticketProm)} sub="por transaccion"/>
               <KPI label="Clientes unicos" value={new Set(filtered.map(v => v.c)).size} sub="en el periodo"/>
             </div>
+
+            {/* Grafico principal: anual con barras o mensual apilado segun filtro */}
             <Panel>
-              <Sec>Evolucion anual</Sec>
-              <ResponsiveContainer width="100%" height={210}>
-                <BarChart data={byYear} barGap={3}>
+              <Sec>{fy === 'todos' ? 'Evolucion anual — ventas, unidades e ingresos' : `Ingresos mensuales por categoria — ${fy}`}</Sec>
+              {fy === 'todos' ? (
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={byYearOrMonth} barGap={3}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#222"/>
+                    <XAxis dataKey="year" tick={{fill:MUTED, fontSize:11, fontFamily:'DM Mono'}}/>
+                    <YAxis yAxisId="v" tick={{fill:MUTED, fontSize:10}} width={25}/>
+                    <YAxis yAxisId="u" tick={{fill:MUTED, fontSize:10}} width={30} tickFormatter={v => `${v}u`}/>
+                    <YAxis yAxisId="i" orientation="right" tick={{fill:MUTED, fontSize:10}} width={58} tickFormatter={v => fmt(v)}/>
+                    <Tooltip content={<TT/>}/>
+                    <Bar yAxisId="i" dataKey="ingresos" fill={`${ACC}28`} radius={[4,4,0,0]} name="Ingresos"/>
+                    <Bar yAxisId="u" dataKey="unidades" fill={`${ACC}55`} radius={[4,4,0,0]} name="Unidades"/>
+                    <Bar yAxisId="v" dataKey="ventas" fill={ACC} radius={[4,4,0,0]} name="Ventas"/>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={byYearOrMonth} barSize={28}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#222"/>
+                    <XAxis dataKey="mes" tick={{fill:MUTED, fontSize:11, fontFamily:'DM Mono'}}/>
+                    <YAxis tick={{fill:MUTED, fontSize:10}} width={58} tickFormatter={v => fmt(v)}/>
+                    <Tooltip content={<TT/>}/>
+                    {allCatsForStack.map(cat => (
+                      <Bar key={cat} dataKey={cat} stackId="a" fill={CAT_STACK_COLORS[cat]||COLORS[0]} name={cat} radius={[0,0,0,0]}/>
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+              {fy !== 'todos' && (
+                <div style={{display:'flex', gap:14, flexWrap:'wrap', marginTop:10}}>
+                  {allCatsForStack.map(cat => (
+                    <div key={cat} style={{display:'flex', alignItems:'center', gap:5}}>
+                      <div style={{width:10, height:10, borderRadius:2, background:CAT_STACK_COLORS[cat]||COLORS[0]}}/>
+                      <span style={{fontSize:11, color:'#aaa', fontFamily:'DM Mono'}}>{cat}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Panel>
+
+            {/* Evolucion mensual con 12 meses fijos + ticket promedio */}
+            <Panel>
+              <Sec>{fy === 'todos' ? 'Evolucion mensual historica' : `Evolucion mes a mes — ${fy} (ventas y ticket promedio)`}</Sec>
+              <ResponsiveContainer width="100%" height={200}>
+                <ComposedChart data={byMonth}>
+                  <defs>
+                    <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={ACC} stopOpacity={0.25}/>
+                      <stop offset="95%" stopColor={ACC} stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#222"/>
-                  <XAxis dataKey="year" tick={{fill:MUTED, fontSize:11, fontFamily:'DM Mono'}}/>
-                  <YAxis yAxisId="v" tick={{fill:MUTED, fontSize:10}} width={25}/>
-                  <YAxis yAxisId="u" tick={{fill:MUTED, fontSize:10}} width={30} tickFormatter={v => `${v}u`}/>
-                  <YAxis yAxisId="i" orientation="right" tick={{fill:MUTED, fontSize:10}} width={58} tickFormatter={v => fmt(v)}/>
+                  <XAxis dataKey="mes" tick={{fill:MUTED, fontSize:fy !== 'todos' ? 11 : 9, fontFamily:'DM Mono'}}/>
+                  <YAxis yAxisId="v" tick={{fill:MUTED, fontSize:10}} width={20}/>
+                  <YAxis yAxisId="t" orientation="right" tick={{fill:MUTED, fontSize:10}} width={58} tickFormatter={v => fmt(v)}/>
                   <Tooltip content={<TT/>}/>
-                  <Bar yAxisId="i" dataKey="ingresos" fill={`${ACC}28`} radius={[4,4,0,0]} name="Ingresos"/>
-                  <Bar yAxisId="u" dataKey="unidades" fill={`${ACC}55`} radius={[4,4,0,0]} name="Unidades"/>
-                  <Bar yAxisId="v" dataKey="ventas" fill={ACC} radius={[4,4,0,0]} name="Ventas"/>
-                </BarChart>
+                  <Area yAxisId="v" type="monotone" dataKey="ventas" stroke={ACC} strokeWidth={2} fill="url(#g1)" name="Ventas"/>
+                  <Line yAxisId="t" type="monotone" dataKey="ticket" stroke="#F0E8D0" strokeWidth={1.5} dot={false} name="Ticket prom." strokeDasharray="4 2"/>
+                </ComposedChart>
               </ResponsiveContainer>
             </Panel>
-            {byMonth.length > 2 && (
-              <Panel>
-                <Sec>Evolucion mensual</Sec>
-                <ResponsiveContainer width="100%" height={170}>
-                  <AreaChart data={byMonth}>
-                    <defs>
-                      <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={ACC} stopOpacity={0.25}/>
-                        <stop offset="95%" stopColor={ACC} stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#222"/>
-                    <XAxis dataKey="mes" tick={{fill:MUTED, fontSize:9, fontFamily:'DM Mono'}}/>
-                    <YAxis yAxisId="v" tick={{fill:MUTED, fontSize:10}} width={20}/>
-                    <Tooltip content={<TT/>}/>
-                    <Area yAxisId="v" type="monotone" dataKey="ventas" stroke={ACC} strokeWidth={2} fill="url(#g1)" name="Ventas"/>
-                  </AreaChart>
-                </ResponsiveContainer>
-              </Panel>
-            )}
+
             <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:14}}>
               <Panel>
                 <Sec>Categoria de producto</Sec>
@@ -602,7 +735,7 @@ export default function App() {
                   <ResponsiveContainer width={145} height={145}>
                     <PieChart>
                       <Pie data={byCat} cx="50%" cy="50%" innerRadius={36} outerRadius={65} paddingAngle={3} dataKey="value">
-                        {byCat.map((_,i) => <Cell key={i} fill={CAT_COLORS[byCat[i].name]||COLORS[i]}/>)}
+                        {byCat.map((_,i) => <Cell key={i} fill={CAT_STACK_COLORS[byCat[i].name]||COLORS[i]}/>)}
                       </Pie>
                       <Tooltip content={<TT/>}/>
                     </PieChart>
@@ -611,7 +744,7 @@ export default function App() {
                     {byCat.map((p,i) => (
                       <div key={i} style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
                         <div style={{display:'flex', alignItems:'center', gap:7}}>
-                          <div style={{width:7, height:7, borderRadius:2, background:CAT_COLORS[p.name]||COLORS[i], flexShrink:0}}/>
+                          <div style={{width:7, height:7, borderRadius:2, background:CAT_STACK_COLORS[p.name]||COLORS[i], flexShrink:0}}/>
                           <span style={{fontSize:11, color:'#bbb', fontFamily:'DM Mono'}}>{p.name}</span>
                         </div>
                         <span style={{fontSize:11, color:ACC, fontFamily:'DM Mono'}}>{p.value}</span>
@@ -645,6 +778,7 @@ export default function App() {
                 </div>
               </Panel>
             </div>
+
             <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:14}}>
               <Panel>
                 <Sec>Ingresos por categoria</Sec>
@@ -653,7 +787,7 @@ export default function App() {
                     <XAxis type="number" tick={{fill:MUTED, fontSize:10}} tickFormatter={v => fmt(v)}/>
                     <YAxis dataKey="name" type="category" tick={{fill:'#aaa', fontSize:11, fontFamily:'DM Mono'}} width={110}/>
                     <Tooltip content={<TT/>}/>
-                    <Bar dataKey="value" radius={[0,6,6,0]}>{catIngresos.map((e,i) => <Cell key={i} fill={CAT_COLORS[e.name]||COLORS[i]}/>)}</Bar>
+                    <Bar dataKey="value" radius={[0,6,6,0]}>{catIngresos.map((e,i) => <Cell key={i} fill={CAT_STACK_COLORS[e.name]||COLORS[i]}/>)}</Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </Panel>
@@ -664,15 +798,17 @@ export default function App() {
                     <XAxis type="number" tick={{fill:MUTED, fontSize:10}}/>
                     <YAxis dataKey="name" type="category" tick={{fill:'#aaa', fontSize:11, fontFamily:'DM Mono'}} width={110}/>
                     <Tooltip content={<TT/>}/>
-                    <Bar dataKey="value" radius={[0,6,6,0]}>{catUnidades.map((e,i) => <Cell key={i} fill={CAT_COLORS[e.name]||COLORS[i]}/>)}</Bar>
+                    <Bar dataKey="value" radius={[0,6,6,0]}>{catUnidades.map((e,i) => <Cell key={i} fill={CAT_STACK_COLORS[e.name]||COLORS[i]}/>)}</Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </Panel>
             </div>
+
             <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:14}}>
               <Panel><Sec>Canal de venta</Sec>{BarH(byCanal)}</Panel>
               <Panel><Sec>Medio de pago</Sec>{BarH(byMP)}</Panel>
             </div>
+
             <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:14}}>
               <Panel>
                 <Sec>Tipo de venta</Sec>
@@ -717,7 +853,7 @@ export default function App() {
                     {recurrentes.map((p,i) => (
                       <div key={i} style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
                         <div style={{display:'flex', alignItems:'center', gap:6}}>
-                          <div style={{width:7, height:7, borderRadius:2, background: i===0 ? ACC : '#444', flexShrink:0}}/>
+                          <div style={{width:7, height:7, borderRadius:2, background:i===0?ACC:'#444', flexShrink:0}}/>
                           <span style={{fontSize:11, color:'#aaa', fontFamily:'DM Mono'}}>{p.name}</span>
                         </div>
                         <span style={{fontSize:11, color:ACC, fontFamily:'DM Mono'}}>{p.value} ({Math.round(p.value/Math.max(filtered.length,1)*100)}%)</span>
@@ -737,6 +873,7 @@ export default function App() {
               <FB val="todos" cur={fy} set={setFy} label="Todos"/>
               {years.map(y => <FB key={y} val={y} cur={fy} set={setFy} label={y}/>)}
             </div>
+
             <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:14}}>
               <Panel>
                 <Sec>Sexo del cliente</Sec>
@@ -782,6 +919,38 @@ export default function App() {
                 {byConocio.length > 0 ? BarH(byConocio) : <p style={{color:MUTED, fontSize:11, fontFamily:'DM Mono', margin:'8px 0'}}>Sin datos aun</p>}
               </Panel>
             </div>
+
+            {/* Mapa de calor de frecuencia mensual */}
+            <Panel>
+              <Sec>Mapa de calor — frecuencia de ventas por mes</Sec>
+              <p style={{margin:'0 0 12px', fontSize:11, color:MUTED, fontFamily:'DM Mono'}}>Cuantas ventas hubo en cada mes de cada año. Mas oscuro = mas ventas.</p>
+              <div style={{overflowX:'auto'}}>
+                <table style={{borderCollapse:'separate', borderSpacing:3}}>
+                  <thead>
+                    <tr>
+                      <td style={{width:40}}/>
+                      {MESES.map(m => <td key={m} style={{textAlign:'center', fontSize:10, color:MUTED, fontFamily:'DM Mono', padding:'0 2px', width:36}}>{m}</td>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {heatmapData.map(({year, counts}) => (
+                      <tr key={year}>
+                        <td style={{fontSize:10, color:MUTED, fontFamily:'DM Mono', paddingRight:8, whiteSpace:'nowrap'}}>{year}</td>
+                        {counts.map((c, i) => (
+                          <td key={i} title={`${MESES[i]} ${year}: ${c} ventas`} style={{
+                            width:36, height:28, borderRadius:4,
+                            background: c === 0 ? '#1A1A1A' : `rgba(200,169,110,${0.15 + (c/maxHeat)*0.85})`,
+                            textAlign:'center', fontSize:10, color: c > 0 ? (c/maxHeat > 0.5 ? DARK : TEXT) : '#333',
+                            fontFamily:'DM Mono', cursor:'default',
+                          }}>{c || ''}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+
             <Panel>
               <Sec>Top clientes por ingresos</Sec>
               <div style={{overflowX:'auto'}}>
@@ -794,20 +963,17 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {topClientes.map((c,i) => {
-                      const info = conM.find(v => v.c === c.name);
-                      return (
-                        <tr key={i} style={{background: i%2===0 ? '#151515' : MID}}>
-                          <td style={{padding:'7px 14px', color: i<3 ? ACC : MUTED, fontWeight: i<3 ? 700 : 400}}>#{i+1}</td>
-                          <td style={{padding:'7px 14px', color:TEXT}}>{c.name}</td>
-                          <td style={{padding:'7px 14px', color:'#777'}}>{info?.telefono||'—'}</td>
-                          <td style={{padding:'7px 14px', color:'#777'}}>{info?.email||'—'}</td>
-                          <td style={{padding:'7px 14px', color:'#888'}}>{c.compras}</td>
-                          <td style={{padding:'7px 14px', color:ACC, fontWeight:600}}>{fmtFull(c.total)}</td>
-                          <td style={{padding:'7px 14px', color:'#888'}}>{fmtFull(c.total/c.compras)}</td>
-                        </tr>
-                      );
-                    })}
+                    {topClientes.map((c,i) => (
+                      <tr key={i} style={{background: i%2===0 ? '#151515' : MID}}>
+                        <td style={{padding:'7px 14px', color: i<3 ? ACC : MUTED, fontWeight: i<3 ? 700 : 400}}>#{i+1}</td>
+                        <td style={{padding:'7px 14px', color:TEXT}}>{c.name}</td>
+                        <td style={{padding:'7px 14px', color:'#777'}}>{c.telefono||'—'}</td>
+                        <td style={{padding:'7px 14px', color:'#777'}}>{c.email||'—'}</td>
+                        <td style={{padding:'7px 14px', color:'#888'}}>{c.compras}</td>
+                        <td style={{padding:'7px 14px', color:ACC, fontWeight:600}}>{fmtFull(c.total)}</td>
+                        <td style={{padding:'7px 14px', color:'#888'}}>{fmtFull(c.total/c.compras)}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -819,18 +985,14 @@ export default function App() {
           <div style={{maxWidth:660, margin:'0 auto', display:'flex', flexDirection:'column', gap:18}}>
             <div>
               <h2 style={{margin:'0 0 4px', fontFamily:"'Playfair Display',serif", fontSize:20}}>Nueva venta</h2>
-              <p style={{margin:0, color:MUTED, fontSize:12, fontFamily:'DM Mono'}}>Pega el mensaje del grupo de WhatsApp. Se guardara automaticamente en Google Sheets.</p>
+              <p style={{margin:0, color:MUTED, fontSize:12, fontFamily:'DM Mono'}}>Pega el mensaje del grupo de WhatsApp. Se guardara en Google Sheets automaticamente.</p>
             </div>
             <details style={{background:'#181818', border:`1px solid ${BORDER}`, borderRadius:8, padding:'10px 16px'}}>
               <summary style={{cursor:'pointer', fontSize:11, color:ACC, fontFamily:'DM Mono', letterSpacing:'0.08em'}}>VER FORMATO DE MENSAJE</summary>
               <pre style={{margin:'12px 0 0', fontSize:11, color:'#888', fontFamily:'DM Mono', lineHeight:1.9, whiteSpace:'pre-wrap'}}>{TEMPLATE}</pre>
             </details>
-            <textarea
-              value={input}
-              onChange={e => { setInput(e.target.value); setParsed(null); setErr(''); setSaved(false); }}
-              placeholder="Pega aca el mensaje completo..."
-              style={{width:'100%', minHeight:280, background:CARD, border:`1px solid ${BORDER}`, borderRadius:10, color:TEXT, padding:16, fontFamily:'DM Mono', fontSize:12, resize:'vertical', outline:'none', lineHeight:1.7, boxSizing:'border-box'}}
-            />
+            <textarea value={input} onChange={e => { setInput(e.target.value); setParsed(null); setErr(''); setSaved(false); }} placeholder="Pega aca el mensaje completo..."
+              style={{width:'100%', minHeight:280, background:CARD, border:`1px solid ${BORDER}`, borderRadius:10, color:TEXT, padding:16, fontFamily:'DM Mono', fontSize:12, resize:'vertical', outline:'none', lineHeight:1.7, boxSizing:'border-box'}}/>
             <button onClick={handleParse} style={{background:ACC, color:DARK, border:'none', borderRadius:8, padding:'11px 22px', fontFamily:'DM Mono', fontSize:12, fontWeight:600, letterSpacing:'0.08em', cursor:'pointer'}}>
               PARSEAR VENTA
             </button>
@@ -839,25 +1001,15 @@ export default function App() {
               <div style={{background:CARD, border:`1px solid ${ACC}44`, borderRadius:12, padding:20, display:'flex', flexDirection:'column', gap:12}}>
                 <span style={{fontFamily:'DM Mono', fontSize:11, color:ACC, letterSpacing:'0.1em'}}>PREVISUALIZACION — VENTA Nro {parsed.n}</span>
                 <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px 20px'}}>
-                  {[
-                    ['Cliente', parsed.c], ['Categoria', parsed.cat],
-                    ['Producto', parsed.prod], ['Unidades', parsed.uni],
-                    ['Monto', parsed.m ? fmtFull(parsed.m) : '—'], ['Tipo ceramica', parsed.tcer||'—'],
-                    ['Provincia', parsed.prov||'—'], ['Ciudad', parsed.ciudad||'—'],
-                    ['Canal', parsed.canal||'—'], ['Pago', parsed.mp||'—'],
-                    ['Tipo venta', parsed.tipo||'—'], ['Sexo', parsed.sexo||'—'],
-                    ['Rango etario', parsed.edad||'—'], ['Conocio', parsed.conocio||'—'],
-                    ['Primera compra', parsed.primera ? 'Si' : 'No'], ['Recurrente', parsed.recurrente ? 'Si' : 'No'],
-                    ['Telefono', parsed.telefono||'—'], ['Email', parsed.email||'—'],
-                  ].map(([k,v]) => (
+                  {[['Cliente',parsed.c],['Categoria',parsed.cat],['Producto',parsed.prod],['Unidades',parsed.uni],['Monto',parsed.m?fmtFull(parsed.m):'—'],['Tipo ceramica',parsed.tcer||'—'],['Provincia',parsed.prov||'—'],['Ciudad',parsed.ciudad||'—'],['Canal',parsed.canal||'—'],['Pago',parsed.mp||'—'],['Tipo venta',parsed.tipo||'—'],['Sexo',parsed.sexo||'—'],['Rango etario',parsed.edad||'—'],['Conocio',parsed.conocio||'—'],['Primera compra',parsed.primera?'Si':'No'],['Recurrente',parsed.recurrente?'Si':'No'],['Telefono',parsed.telefono||'—'],['Email',parsed.email||'—']].map(([k,v]) => (
                     <div key={k} style={{display:'flex', flexDirection:'column', gap:2}}>
                       <span style={{fontSize:9, color:'#444', fontFamily:'DM Mono', textTransform:'uppercase', letterSpacing:'0.1em'}}>{k}</span>
                       <span style={{fontSize:13, color:TEXT}}>{String(v)}</span>
                     </div>
                   ))}
                 </div>
-                <button onClick={handleSave} disabled={saving} style={{marginTop:4, background: saved ? '#1A3A1A' : saving ? '#333' : ACC, color: saved ? '#6ABA6A' : saving ? '#888' : DARK, border:`1px solid ${saved ? '#3A7A3A' : saving ? BORDER : ACC}`, borderRadius:8, padding:'11px 18px', fontFamily:'DM Mono', fontSize:12, fontWeight:600, cursor: saving ? 'wait' : 'pointer', letterSpacing:'0.08em'}}>
-                  {saved ? 'GUARDADO EN SHEETS' : saving ? 'GUARDANDO...' : 'CONFIRMAR Y GUARDAR'}
+                <button onClick={handleSave} disabled={saving} style={{marginTop:4, background:saved?'#1A3A1A':saving?'#333':ACC, color:saved?'#6ABA6A':saving?'#888':DARK, border:`1px solid ${saved?'#3A7A3A':saving?BORDER:ACC}`, borderRadius:8, padding:'11px 18px', fontFamily:'DM Mono', fontSize:12, fontWeight:600, cursor:saving?'wait':'pointer', letterSpacing:'0.08em'}}>
+                  {saved?'GUARDADO EN SHEETS':saving?'GUARDANDO...':'CONFIRMAR Y GUARDAR'}
                 </button>
               </div>
             )}
@@ -881,25 +1033,21 @@ export default function App() {
                 </thead>
                 <tbody>
                   {ventas.map((v,i) => (
-                    <tr key={i} style={{background: v.anulada ? '#1A1010' : i%2===0 ? '#151515' : MID, opacity: v.anulada ? 0.5 : 1}}>
+                    <tr key={i} style={{background:v.anulada?'#1A1010':i%2===0?'#151515':MID, opacity:v.anulada?0.5:1}}>
                       <td style={{padding:'7px 12px', color:ACC, fontWeight:600}}>{v.n}</td>
                       <td style={{padding:'7px 12px', color:'#777', whiteSpace:'nowrap'}}>{v.f}</td>
                       <td style={{padding:'7px 12px', color:TEXT, whiteSpace:'nowrap', maxWidth:120, overflow:'hidden', textOverflow:'ellipsis'}}>{v.c}</td>
                       <td style={{padding:'7px 12px', color:'#777', whiteSpace:'nowrap'}}>{v.telefono||'—'}</td>
                       <td style={{padding:'7px 12px', color:'#777', maxWidth:120, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{v.email||'—'}</td>
                       <td style={{padding:'7px 12px', color:'#888'}}>{v.sexo||'—'}</td>
-                      <td style={{padding:'7px 12px'}}>
-                        <span style={{fontSize:9, padding:'2px 7px', borderRadius:4, background:`${CAT_COLORS[v.cat]||'#444'}22`, color:CAT_COLORS[v.cat]||'#aaa', border:`1px solid ${CAT_COLORS[v.cat]||'#444'}33`, whiteSpace:'nowrap'}}>{v.cat}</span>
-                      </td>
+                      <td style={{padding:'7px 12px'}}><span style={{fontSize:9, padding:'2px 7px', borderRadius:4, background:`${CAT_STACK_COLORS[v.cat]||'#444'}22`, color:CAT_STACK_COLORS[v.cat]||'#aaa', border:`1px solid ${CAT_STACK_COLORS[v.cat]||'#444'}33`, whiteSpace:'nowrap'}}>{v.cat}</span></td>
                       <td style={{padding:'7px 12px', color:'#777'}}>{v.tcer||'—'}</td>
                       <td style={{padding:'7px 12px', color:'#888', textAlign:'center'}}>{v.uni}</td>
-                      <td style={{padding:'7px 12px', color: v.m>0 ? ACC : MUTED, whiteSpace:'nowrap'}}>{v.m>0 ? fmtFull(v.m) : '—'}</td>
+                      <td style={{padding:'7px 12px', color:v.m>0?ACC:MUTED, whiteSpace:'nowrap'}}>{v.m>0?fmtFull(v.m):'—'}</td>
                       <td style={{padding:'7px 12px', color:'#888', whiteSpace:'nowrap'}}>{v.prov||'—'}</td>
                       <td style={{padding:'7px 12px', color:'#777', maxWidth:100, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{v.canal}</td>
                       <td style={{padding:'7px 12px', color:'#777', whiteSpace:'nowrap'}}>{v.mp}</td>
-                      <td style={{padding:'7px 12px'}}>
-                        <span style={{fontSize:9, padding:'2px 6px', borderRadius:3, background: v.tipo==='B2B' ? `${ACC}33` : v.tipo==='Canje' ? '#2A2A1A' : '#1A2A1A', color: v.tipo==='B2B' ? ACC : v.tipo==='Canje' ? '#AAA844' : '#5A9A5A'}}>{v.tipo}</span>
-                      </td>
+                      <td style={{padding:'7px 12px'}}><span style={{fontSize:9, padding:'2px 6px', borderRadius:3, background:v.tipo==='B2B'?`${ACC}33`:v.tipo==='Canje'?'#2A2A1A':'#1A2A1A', color:v.tipo==='B2B'?ACC:v.tipo==='Canje'?'#AAA844':'#5A9A5A'}}>{v.tipo}</span></td>
                     </tr>
                   ))}
                 </tbody>
